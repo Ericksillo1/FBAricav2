@@ -204,11 +204,11 @@ else:
 # 6.5. Checkbox para usar métricas de Likes
 use_likes = st.sidebar.checkbox("Mostrar métrica de Likes (sumatoria)", value=False)
 
-# 6.6. Input para búsqueda de palabras clave en Mensaje
-keyword_search = st.sidebar.text_input("Buscar en Mensaje", "")
+# 6.6. Input para búsqueda de palabras clave en Posts
+post_search = st.sidebar.text_input("Buscar en Posts", "")
 
 # --------------------------------
-# 7. Filtrado según selección
+# 7. Filtrado según selección para Posts o Comments
 # --------------------------------
 if dataset_option == "Posts":
     df = df_posts.copy()
@@ -223,9 +223,9 @@ if selected_category != "Todas":
 mask = (df['Fecha'].dt.date >= fecha_inicio) & (df['Fecha'].dt.date <= fecha_fin)
 df = df.loc[mask]
 
-# Filtrar por palabra clave en Mensaje
-if keyword_search.strip() != "":
-    df = df[df['Mensaje'].str.contains(keyword_search, case=False, na=False)]
+# Filtrar por palabra clave en Posts si aplica
+if dataset_option == "Posts" and post_search.strip() != "":
+    df = df[df['Mensaje'].str.contains(post_search, case=False, na=False)]
 
 # --------------------------------
 # 8. KPI Dashboard
@@ -255,25 +255,41 @@ num_cat = df['Categoria'].nunique() if 'Categoria' in df.columns else 0
 col4.metric("Categorías Activas", f"{num_cat}")
 
 # --------------------------------
-# 9. Buscar comentarios por palabra clave (solo si se selecciona “Comments”)
+# 9. Si buscamos en Posts, mostrar n-grams de Comments relacionados
 # --------------------------------
-if dataset_option == "Comments":
-    st.subheader("Buscar Comentarios por Palabra Clave")
-    search_term_comments = st.text_input("Palabra clave en Comentarios", "")
-    if search_term_comments.strip() != "":
-        df_search = df_comments[
-            df_comments['Mensaje'].str.contains(search_term_comments, case=False, na=False)
-        ].copy()
-        if not df_search.empty:
-            st.dataframe(
-                df_search[["Comment_ID", "Post_ID", "Autor", "Fecha", "Reacciones", "Mensaje"]],
-                use_container_width=True
+if dataset_option == "Posts" and post_search.strip() != "":
+    st.header("N-gramas de Comentarios Relacionados a los Posts Encontrados")
+    # Obtener IDs de posts filtrados que contienen la búsqueda
+    post_ids = df['Post_ID'].unique().tolist()
+    # Filtrar comentarios cuyos Post_ID estén en esa lista
+    df_related_comments = df_comments[df_comments['Post_ID'].isin(post_ids)].copy()
+    if not df_related_comments.empty:
+        textos_rel = df_related_comments['Mensaje'].dropna().astype(str)
+        base_stop = list(stopwords.words("spanish"))
+        extra_stop = [
+            "http", "https", "www", "com", "org", "net", "ftp",
+            "https://", "http://", "://", "url", "rt"
+        ]
+        spanish_stopwords = base_stop + extra_stop
+        @st.cache_data
+        def gen_ngrams_relat(text_series: pd.Series, ngram_range=(1, 1)):
+            vectorizer = CountVectorizer(
+                ngram_range=ngram_range,
+                stop_words=spanish_stopwords
             )
-        else:
-            st.write("No se encontraron comentarios que contengan esa palabra.")
+            X = vectorizer.fit_transform(text_series)
+            ngrams = vectorizer.get_feature_names_out()
+            counts = X.sum(axis=0).A1
+            return pd.DataFrame({"ngram": ngrams, "count": counts}).sort_values(by="count", ascending=False)
+
+        df_ngrams_rel = gen_ngrams_relat(textos_rel, ngram_range=ngram_range)
+        st.subheader(f"Top N-gramas en Comentarios relacionados ({ngram_option})")
+        st.dataframe(df_ngrams_rel.head(50), use_container_width=True)
+    else:
+        st.write("No hay comentarios relacionados con los posts encontrados.")
 
 # --------------------------------
-# 10. Detectar y mostrar outliers por reacciones
+# 10. Detección de Outliers por Reacciones
 # --------------------------------
 st.header("Detección de Outliers por Reacciones")
 
@@ -420,10 +436,11 @@ st.markdown("""
 - Se ha ampliado el diccionario de categorías con más términos.
 - Se han añadido stopwords adicionales para filtrar URLs en los n-gramas.
 - Se incorpora detección de outliers por reacciones.
-- Se añade búsqueda de palabras clave en Mensaje y, en Comments, búsqueda específica de comentarios.
+- Se añade búsqueda de palabras clave en Posts que despliega n-grams de comments relacionados.
 - En caso de querer ver tendencias de un n-grama, activa la casilla "Mostrar tendencias temporales de un N-grama".
 - Para Word Cloud, activa "Mostrar Word Cloud".
 - Para Topic Modeling, activa "Mostrar Topic Modeling" y elige el número de tópicos.
 - Para correlación Sentimiento vs Reacciones en Comments, activa "Mostrar correlación Sentimiento vs Likes (Comments)".
 - Recarga la app si se añaden nuevos datos a la base para actualizar rangos y métricas.
 """)
+
