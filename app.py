@@ -192,14 +192,16 @@ fecha_inicio, fecha_fin = st.sidebar.slider(
     format="YYYY-MM-DD"
 )
 
-# 6.4. Selector de tipo de n-grama
-ngram_option = st.sidebar.selectbox("Tipo de n-grama", ["Unigramas", "Bigramas", "Trigramas"])
+# 6.4. Selector de tipo de n-grama (ahora incluye cuatrigramas)
+ngram_option = st.sidebar.selectbox("Tipo de n-grama", ["Unigramas", "Bigramas", "Trigramas", "Cuatrigramas"])
 if ngram_option == "Unigramas":
     ngram_range = (1, 1)
 elif ngram_option == "Bigramas":
     ngram_range = (2, 2)
-else:
+elif ngram_option == "Trigramas":
     ngram_range = (3, 3)
+else:  # Cuatrigramas
+    ngram_range = (4, 4)
 
 # 6.5. Checkbox para usar métricas de Likes
 use_likes = st.sidebar.checkbox("Mostrar métrica de Likes (sumatoria)", value=False)
@@ -428,19 +430,15 @@ if dataset_option == "Comments" and show_corr:
 # 16. Indicaciones finales
 # --------------------------------
 st.markdown("""
-- El KPI Dashboard muestra al inicio la visión general:
-  1. Total de registros filtrados.
-  2. Reacciones promedio.
-  3. Sentimiento promedio (solo para Comments) con semáforo de alerta.
-  4. Cantidad de categorías activas.
-- Se ha ampliado el diccionario de categorías con más términos.
-- Se han añadido stopwords adicionales para filtrar URLs en los n-gramas.
+- Ahora puedes analizar cuatrigramas además de uni-, bi- y trigramas.
+- El KPI Dashboard muestra al inicio la visión general.
+- La búsqueda en Posts despliega n-gramas de comentarios relacionados.
 - Se incorpora detección de outliers por reacciones.
-- Se añade búsqueda de palabras clave en Posts que despliega n-grams de comments relacionados.
 - En caso de querer ver tendencias de un n-grama, activa la casilla "Mostrar tendencias temporales de un N-grama".
 - Para Word Cloud, activa "Mostrar Word Cloud".
 - Para Topic Modeling, activa "Mostrar Topic Modeling" y elige el número de tópicos.
 - Para correlación Sentimiento vs Reacciones en Comments, activa "Mostrar correlación Sentimiento vs Likes (Comments)".
 - Recarga la app si se añaden nuevos datos a la base para actualizar rangos y métricas.
 """)
+
 
