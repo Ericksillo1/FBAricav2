@@ -49,6 +49,8 @@ def load_posts():
     query = "SELECT * FROM Posts"
     df = pd.read_sql(query, conn)
     df['Fecha'] = pd.to_datetime(df['Fecha'])
+    # Asegurarse de que Post_ID se maneje como string para buscar con guiones bajos
+    df['Post_ID'] = df['Post_ID'].astype(str)
     if 'Reacciones' not in df.columns:
         df['Reacciones'] = 0
     return df[['Post_ID', 'Fecha', 'Autor', 'Mensaje', 'Reacciones']].copy()
@@ -62,6 +64,7 @@ def load_comments():
     query = "SELECT * FROM Comments"
     df_c = pd.read_sql(query, conn)
     df_c['Fecha'] = pd.to_datetime(df_c['Fecha'])
+    df_c['Post_ID'] = df_c['Post_ID'].astype(str)  # convertir a string también
     if 'Reacciones' not in df_c.columns:
         df_c['Reacciones'] = 0
     return df_c[['Comment_ID', 'Post_ID', 'Autor', 'Mensaje', 'Fecha', 'Reacciones']].copy()
@@ -177,31 +180,32 @@ else:
     categorias = ["Todas"] + sorted(df_comments["Categoria"].unique().tolist())
 selected_category = st.sidebar.selectbox("Categoría", categorias)
 
-# 6.3. Slider de rango de fechas
-if dataset_option == "Posts":
-    min_fecha = df_posts['Fecha'].min().date()
-    max_fecha = df_posts['Fecha'].max().date()
-else:
-    min_fecha = df_comments['Fecha'].min().date()
-    max_fecha = df_comments['Fecha'].max().date()
+# 6.3. Slider de rango de fechas: iniciar el 1 de marzo de 2025 hasta hoy
+fixed_start = datetime.date(2025, 3, 1)
+max_fecha = datetime.date.today()
 fecha_inicio, fecha_fin = st.sidebar.slider(
     "Rango de fechas",
-    min_value=min_fecha,
+    min_value=fixed_start,
     max_value=max_fecha,
-    value=(min_fecha, max_fecha),
+    value=(fixed_start, max_fecha),
     format="YYYY-MM-DD"
 )
 
-# 6.4. Selector de tipo de n-grama (ahora incluye cuatrigramas)
-ngram_option = st.sidebar.selectbox("Tipo de n-grama", ["Unigramas", "Bigramas", "Trigramas", "Cuatrigramas"])
+# 6.4. Selector de tipo de n-grama (ahora incluye Pentagramas)
+ngram_option = st.sidebar.selectbox(
+    "Tipo de n-grama",
+    ["Unigramas", "Bigramas", "Trigramas", "Cuatrigramas", "Pentagramas"]
+)
 if ngram_option == "Unigramas":
     ngram_range = (1, 1)
 elif ngram_option == "Bigramas":
     ngram_range = (2, 2)
 elif ngram_option == "Trigramas":
     ngram_range = (3, 3)
-else:  # Cuatrigramas
+elif ngram_option == "Cuatrigramas":
     ngram_range = (4, 4)
+else:  # Pentagramas
+    ngram_range = (5, 5)
 
 # 6.5. Checkbox para usar métricas de Likes
 use_likes = st.sidebar.checkbox("Mostrar métrica de Likes (sumatoria)", value=False)
@@ -241,7 +245,9 @@ col2.metric("Reacciones Promedio", f"{avg_reacts:.2f}")
 
 if dataset_option == "Comments":
     sia = SentimentIntensityAnalyzer()
-    df['compound_tmp'] = df['Mensaje'].fillna("").apply(lambda t: sia.polarity_scores(str(t))['compound'])
+    df['compound_tmp'] = df['Mensaje'].fillna("").apply(
+        lambda t: sia.polarity_scores(str(t))['compound']
+    )
     avg_sent = df['compound_tmp'].mean()
     if avg_sent < -0.1:
         status = "🔴 Negativo"
@@ -257,13 +263,34 @@ num_cat = df['Categoria'].nunique() if 'Categoria' in df.columns else 0
 col4.metric("Categorías Activas", f"{num_cat}")
 
 # --------------------------------
-# 9. Si buscamos en Posts, mostrar n-grams de Comments relacionados
+# 9. Buscador de Post por ID (solo Posts)
+# --------------------------------
+if dataset_option == "Posts":
+    st.subheader("Buscar Post por ID")
+    post_id_input = st.text_input("Introduce Post ID", "")
+    if post_id_input.strip() != "":
+        # No convertir a int; buscar como cadena
+        pid_str = post_id_input.strip()
+        df_found = df[df['Post_ID'] == pid_str]
+        if not df_found.empty:
+            post_row = df_found.iloc[0]
+            st.markdown(f"**Post encontrado:**")
+            st.markdown(f"- ID: {post_row['Post_ID']}")
+            st.markdown(f"- Autor: {post_row['Autor']}")
+            st.markdown(f"- Fecha: {post_row['Fecha'].date()}")
+            st.markdown(f"- Mensaje: {post_row['Mensaje']}")
+            # Construir un enlace de ejemplo; ajústalo según tu plataforma real
+            ejemplo_url = f"https://facebook.com/{post_row['Post_ID']}"
+            st.markdown(f"[Ir al Post]({ejemplo_url})", unsafe_allow_html=True)
+        else:
+            st.write("No se encontró ningún post con ese ID en los resultados actuales.")
+
+# --------------------------------
+# 10. Si buscamos en Posts, mostrar n‐grams de Comments relacionados
 # --------------------------------
 if dataset_option == "Posts" and post_search.strip() != "":
-    st.header("N-gramas de Comentarios Relacionados a los Posts Encontrados")
-    # Obtener IDs de posts filtrados que contienen la búsqueda
+    st.header("N‐gramas de Comentarios Relacionados a los Posts Encontrados")
     post_ids = df['Post_ID'].unique().tolist()
-    # Filtrar comentarios cuyos Post_ID estén en esa lista
     df_related_comments = df_comments[df_comments['Post_ID'].isin(post_ids)].copy()
     if not df_related_comments.empty:
         textos_rel = df_related_comments['Mensaje'].dropna().astype(str)
@@ -273,6 +300,7 @@ if dataset_option == "Posts" and post_search.strip() != "":
             "https://", "http://", "://", "url", "rt"
         ]
         spanish_stopwords = base_stop + extra_stop
+
         @st.cache_data
         def gen_ngrams_relat(text_series: pd.Series, ngram_range=(1, 1)):
             vectorizer = CountVectorizer(
@@ -285,13 +313,13 @@ if dataset_option == "Posts" and post_search.strip() != "":
             return pd.DataFrame({"ngram": ngrams, "count": counts}).sort_values(by="count", ascending=False)
 
         df_ngrams_rel = gen_ngrams_relat(textos_rel, ngram_range=ngram_range)
-        st.subheader(f"Top N-gramas en Comentarios relacionados ({ngram_option})")
+        st.subheader(f"Top N‐gramas en Comentarios relacionados ({ngram_option})")
         st.dataframe(df_ngrams_rel.head(50), use_container_width=True)
     else:
         st.write("No hay comentarios relacionados con los posts encontrados.")
 
 # --------------------------------
-# 10. Detección de Outliers por Reacciones
+# 11. Detección de Outliers por Reacciones
 # --------------------------------
 st.header("Detección de Outliers por Reacciones")
 
@@ -314,9 +342,9 @@ else:
     st.write("No hay datos suficientes para detectar outliers.")
 
 # --------------------------------
-# 11. Generación de N-gramas y cálculo de likes
+# 12. Generación de N‐gramas y cálculo de likes
 # --------------------------------
-st.header(f"Top N-gramas ({ngram_option})")
+st.header(f"Top N‐gramas ({ngram_option})")
 
 textos = df["Mensaje"].dropna().astype(str)
 base_stop = list(stopwords.words("spanish"))
@@ -353,13 +381,13 @@ else:
     st.dataframe(df_ngrams[["ngram", "count"]].head(50), use_container_width=True)
 
 # --------------------------------
-# 12. Tendencias temporales de N-grama (opción en sidebar)
+# 13. Tendencias temporales de N‐grama (opción en sidebar)
 # --------------------------------
-show_trend = st.sidebar.checkbox("Mostrar tendencias temporales de un N-grama", value=False)
+show_trend = st.sidebar.checkbox("Mostrar tendencias temporales de un N‐grama", value=False)
 if show_trend:
-    ngram_for_trend = st.sidebar.text_input("Introduce un N-grama para su tendencia (exacto)", "")
+    ngram_for_trend = st.sidebar.text_input("Introduce un N‐grama para su tendencia (exacto)", "")
     if ngram_for_trend.strip() != "":
-        st.subheader(f"Tendencia Temporal para el N-grama: '{ngram_for_trend}'")
+        st.subheader(f"Tendencia Temporal para el N‐grama: '{ngram_for_trend}'")
         df_temp = df.copy()
         df_temp['texto_lower'] = df_temp['Mensaje'].str.lower().fillna('')
         pattern = rf"\b{re.escape(ngram_for_trend.lower())}\b"
@@ -370,7 +398,7 @@ if show_trend:
         st.line_chart(trend_series)
 
 # --------------------------------
-# 13. Word Cloud (opción en sidebar)
+# 14. Word Cloud (opción en sidebar)
 # --------------------------------
 show_wordcloud = st.sidebar.checkbox("Mostrar Word Cloud", value=False)
 if show_wordcloud:
@@ -387,31 +415,35 @@ if show_wordcloud:
     st.pyplot(fig_wc)
 
 # --------------------------------
-# 14. Topic Modeling LDA (opción en sidebar)
+# 15. Topic Modeling LDA (opción en sidebar) - CORREGIDO
 # --------------------------------
 show_topics = st.sidebar.checkbox("Mostrar Topic Modeling", value=False)
 if show_topics:
     num_topics = st.sidebar.slider("Número de tópicos LDA", min_value=2, max_value=10, value=3)
     st.subheader(f"Topic Modeling con LDA ({num_topics} tópicos)")
+
     tf_vectorizer = CountVectorizer(
         stop_words=spanish_stopwords,
         max_df=0.95,
         min_df=2
     )
     tf_matrix = tf_vectorizer.fit_transform(textos)
+
     lda = LatentDirichletAllocation(n_components=num_topics, random_state=0)
     lda.fit(tf_matrix)
+
     words = tf_vectorizer.get_feature_names_out()
     topics = {}
     for idx, topic in enumerate(lda.components_):
         top_indices = topic.argsort()[-10:][::-1]
         top_words = [words[i] for i in top_indices]
         topics[f"Tópico {idx+1}"] = ", ".join(top_words)
+
     df_topics = pd.DataFrame.from_dict(topics, orient='index', columns=['Palabras Clave'])
     st.write(df_topics)
 
 # --------------------------------
-# 15. Correlación Sentimiento vs Reacciones (solo Comments)
+# 16. Correlación Sentimiento vs Reacciones (solo Comments)
 # --------------------------------
 show_corr = st.sidebar.checkbox("Mostrar correlación Sentimiento vs Likes (Comments)", value=False)
 if dataset_option == "Comments" and show_corr:
@@ -427,17 +459,17 @@ if dataset_option == "Comments" and show_corr:
     st.pyplot(fig_corr)
 
 # --------------------------------
-# 16. Indicaciones finales
+# 17. Indicaciones finales
 # --------------------------------
 st.markdown("""
-- Ahora puedes analizar cuatrigramas además de uni-, bi- y trigramas.
+- Puedes analizar Pentagramas además de uni-, bi-, tri- y cuatrigramas.
 - El KPI Dashboard muestra al inicio la visión general.
 - La búsqueda en Posts despliega n-gramas de comentarios relacionados.
 - Se incorpora detección de outliers por reacciones.
-- En caso de querer ver tendencias de un n-grama, activa la casilla "Mostrar tendencias temporales de un N-grama".
-- Para Word Cloud, activa "Mostrar Word Cloud".
-- Para Topic Modeling, activa "Mostrar Topic Modeling" y elige el número de tópicos.
-- Para correlación Sentimiento vs Reacciones en Comments, activa "Mostrar correlación Sentimiento vs Likes (Comments)".
+- En caso de querer ver tendencias de un n-grama, activa la casilla “Mostrar tendencias temporales de un N-grama”.
+- Para Word Cloud, activa “Mostrar Word Cloud”.
+- Para Topic Modeling, activa “Mostrar Topic Modeling” y elige el número de tópicos.
+- Para correlación Sentimiento vs Reacciones en Comments, activa “Mostrar correlación Sentimiento vs Likes (Comments)”.
 - Recarga la app si se añaden nuevos datos a la base para actualizar rangos y métricas.
 """)
 
