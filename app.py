@@ -318,7 +318,9 @@ else:
 # --------------------------------
 st.header(f"Top N-gramas ({ngram_option})")
 
+# Filtramos los textos nulos para que el conteo de n-gramas sea correcto
 textos = df["Mensaje"].dropna().astype(str)
+
 base_stop = list(stopwords.words("spanish"))
 extra_stop = [
     "http", "https", "www", "com", "org", "net", "ftp",
@@ -342,7 +344,8 @@ def generar_ngrams(text_series: pd.Series, ngram_range=(1, 1), likes=None):
         df_ngrams["likes_sum"] = likes_sum
     return df_ngrams.sort_values(by="count", ascending=False)
 
-likes_param = df["Reacciones"] if use_likes else None
+# Alinear el vector de reacciones con los textos utilizados
+likes_param = df.loc[textos.index, "Reacciones"] if use_likes else None
 df_ngrams = generar_ngrams(textos, ngram_range=ngram_range, likes=likes_param)
 
 if use_likes:
