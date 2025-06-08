@@ -85,7 +85,8 @@ def categorize_posts(df):
             "gobierno", "elección", "parlamento", "ley", "ministro",
             "presidente", "alcalde", "congreso", "diputado", "senador",
             "votación", "campaña", "coalición", "partido", "oposición",
-            "constitución"
+            "constitución","Gonzalo Winter","Gabriel Boric","cosejal","alcalde","luis malla","gobernador","jorge diaz",
+            "republicanos","liberales","partido","toha" 
         ],
         "Economía": [
             "economía", "inflación", "PIB", "mercado", "impuestos",
@@ -108,7 +109,7 @@ def categorize_posts(df):
             "delito", "policía", "robo", "homicidio", "seguridad ciudadana",
             "justicia", "tribunal", "carabinero", "prisión", "recluso",
             "vigilancia", "crimen", "violencia", "menor infractor",
-            "accidente"
+            "accidente","cerro chuño","delicuentes","delicuentes","ladron"
         ],
         "Medio Ambiente": [
             "contaminación", "reciclaje", "cambio climático", "deforestación",
