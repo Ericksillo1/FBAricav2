@@ -12,25 +12,25 @@ import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 from sklearn.decomposition import LatentDirichletAllocation
 import numpy as np
+from pysentimiento import create_analyzer
 
-# Descargar recursos de NLTK (solo la primera vez)
 nltk.download('stopwords')
 nltk.download('vader_lexicon')
 
-# --------------------------------
-# 1. Conexión a SQL Server usando variables de entorno
-# --------------------------------
+@st.cache_resource
+def get_senti_es():
+    return create_analyzer(task="sentiment", lang="es")
+sent_analyzer = get_senti_es()
+
 @st.cache_resource
 def get_connection():
     server   = os.getenv("DB_SERVER")
     database = os.getenv("DB_NAME")
     user     = os.getenv("DB_USER")
     password = os.getenv("DB_PASSWORD")
-
     if not all([server, database, user, password]):
         st.error("🔴 Faltan variables de entorno para la conexión SQL Server. Revisa los Secrets.")
         st.stop()
-
     conn_str = (
         "DRIVER={ODBC Driver 17 for SQL Server};"
         f"SERVER={server};"
@@ -40,44 +40,31 @@ def get_connection():
     )
     return pyodbc.connect(conn_str)
 
-# --------------------------------
-# 2. Cargar y procesar Posts
-# --------------------------------
 @st.cache_data
 def load_posts():
     conn = get_connection()
     query = "SELECT * FROM Posts"
     df = pd.read_sql(query, conn)
     df['Fecha'] = pd.to_datetime(df['Fecha'])
-    # Asegurarse de que Post_ID se maneje como string para buscar con guiones bajos
     df['Post_ID'] = df['Post_ID'].astype(str)
     if 'Reacciones' not in df.columns:
         df['Reacciones'] = 0
     return df[['Post_ID', 'Fecha', 'Autor', 'Mensaje', 'Reacciones']].copy()
 
-# --------------------------------
-# 3. Cargar y procesar Comments
-# --------------------------------
 @st.cache_data
 def load_comments():
     conn = get_connection()
     query = "SELECT * FROM Comments"
     df_c = pd.read_sql(query, conn)
     df_c['Fecha'] = pd.to_datetime(df_c['Fecha'])
-    df_c['Post_ID'] = df_c['Post_ID'].astype(str)  # convertir a string también
+    df_c['Post_ID'] = df_c['Post_ID'].astype(str)
     if 'Reacciones' not in df_c.columns:
         df_c['Reacciones'] = 0
     return df_c[['Comment_ID', 'Post_ID', 'Autor', 'Mensaje', 'Fecha', 'Reacciones']].copy()
 
-# --------------------------------
-# 4. Cargar DataFrames
-# --------------------------------
 df_posts = load_posts()
 df_comments = load_comments()
 
-# --------------------------------
-# 5. Función para categorizar Posts con diccionario ampliado
-# --------------------------------
 @st.cache_data
 def categorize_posts(df):
     categoria_dict = {
@@ -145,7 +132,6 @@ def categorize_posts(df):
         ],
         "Otros": []
     }
-
     def asignar_categoria(texto):
         if not isinstance(texto, str):
             return "Otros"
@@ -156,32 +142,21 @@ def categorize_posts(df):
                 if re.search(pattern, texto_min):
                     return cat
         return "Otros"
-
     df['Categoria'] = df['Mensaje'].apply(asignar_categoria)
     return df
 
 df_posts = categorize_posts(df_posts)
-
-# 5.1 Asignar categoría a Comments (basado en categoría del Post padre)
 df_comments = df_comments.merge(df_posts[['Post_ID', 'Categoria']], on='Post_ID', how='left')
 df_comments['Categoria'] = df_comments['Categoria'].fillna("Otros")
 
-# --------------------------------
-# 6. Sidebar: selección de dataset, categoría, rango de fechas, n-gramas y opciones
-# --------------------------------
 st.sidebar.header("Filtros y Opciones")
-
-# 6.1. Selector de dataset
 dataset_option = st.sidebar.selectbox("Seleccionar dataset", ["Posts", "Comments"])
-
-# 6.2. Selector de categoría
 if dataset_option == "Posts":
     categorias = ["Todas"] + sorted(df_posts["Categoria"].unique().tolist())
 else:
     categorias = ["Todas"] + sorted(df_comments["Categoria"].unique().tolist())
 selected_category = st.sidebar.selectbox("Categoría", categorias)
 
-# 6.3. Slider de rango de fechas: iniciar el 1 de marzo de 2025 hasta hoy
 fixed_start = datetime.date(2025, 3, 1)
 max_fecha = datetime.date.today()
 fecha_inicio, fecha_fin = st.sidebar.slider(
@@ -191,59 +166,36 @@ fecha_inicio, fecha_fin = st.sidebar.slider(
     value=(fixed_start, max_fecha),
     format="YYYY-MM-DD"
 )
-
-# 6.4. Selector de tipo de n-grama (ahora incluye Pentagramas)
 ngram_option = st.sidebar.selectbox(
     "Tipo de n-grama",
     ["Unigramas", "Bigramas", "Trigramas", "Cuatrigramas", "Pentagramas"]
 )
-if ngram_option == "Unigramas":
-    ngram_range = (1, 1)
-elif ngram_option == "Bigramas":
-    ngram_range = (2, 2)
-elif ngram_option == "Trigramas":
-    ngram_range = (3, 3)
-elif ngram_option == "Cuatrigramas":
-    ngram_range = (4, 4)
-else:  # Pentagramas
-    ngram_range = (5, 5)
-
-# 6.5. Checkbox para usar métricas de Likes
+ngram_range = {
+    "Unigramas": (1,1),
+    "Bigramas": (2,2),
+    "Trigramas": (3,3),
+    "Cuatrigramas": (4,4),
+    "Pentagramas": (5,5)
+}[ngram_option]
 use_likes = st.sidebar.checkbox("Mostrar métrica de Likes (sumatoria)", value=False)
-
-# 6.6. Input para búsqueda de palabras clave en Posts
 post_search = st.sidebar.text_input("Buscar en Posts", "")
 
-# --------------------------------
-# 7. Filtrado según selección para Posts o Comments
-# --------------------------------
 if dataset_option == "Posts":
     df = df_posts.copy()
 else:
     df = df_comments.copy()
-
-# Filtrar por categoría
 if selected_category != "Todas":
     df = df[df["Categoria"] == selected_category]
-
-# Filtrar por fechas
 mask = (df['Fecha'].dt.date >= fecha_inicio) & (df['Fecha'].dt.date <= fecha_fin)
 df = df.loc[mask]
-
-# Filtrar por palabra clave en Posts si aplica
 if dataset_option == "Posts" and post_search.strip() != "":
     df = df[df['Mensaje'].str.contains(post_search, case=False, na=False)]
 
-# --------------------------------
-# 8. KPI Dashboard
-# --------------------------------
 st.title("Análisis Avanzado de N-gramas, Sentimiento y Temas con KPIs")
-
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Registros", f"{len(df)}")
 avg_reacts = df["Reacciones"].mean() if "Reacciones" in df.columns else 0
 col2.metric("Reacciones Promedio", f"{avg_reacts:.2f}")
-
 if dataset_option == "Comments":
     sia = SentimentIntensityAnalyzer()
     df['compound_tmp'] = df['Mensaje'].fillna("").apply(
@@ -259,20 +211,17 @@ if dataset_option == "Comments":
     col3.metric("Sentimiento Promedio", f"{avg_sent:.2f}", status)
 else:
     col3.metric("Sentimiento Promedio", "N/A")
-
 num_cat = df['Categoria'].nunique() if 'Categoria' in df.columns else 0
 col4.metric("Categorías Activas", f"{num_cat}")
 
 # --------------------------------
-# 9. Buscador de Post por ID (solo Posts)
-# --------------------------------
+# Buscador por ID de Post (siempre visible en modo Posts)
 if dataset_option == "Posts":
     st.subheader("Buscar Post por ID")
-    post_id_input = st.text_input("Introduce Post ID", "")
+    post_id_input = st.text_input("Introduce Post ID", key="postid_input")
     if post_id_input.strip() != "":
-        # No convertir a int; buscar como cadena
         pid_str = post_id_input.strip()
-        df_found = df[df['Post_ID'] == pid_str]
+        df_found = df_posts[df_posts['Post_ID'] == pid_str]
         if not df_found.empty:
             post_row = df_found.iloc[0]
             st.markdown(f"**Post encontrado:**")
@@ -280,28 +229,79 @@ if dataset_option == "Posts":
             st.markdown(f"- Autor: {post_row['Autor']}")
             st.markdown(f"- Fecha: {post_row['Fecha'].date()}")
             st.markdown(f"- Mensaje: {post_row['Mensaje']}")
-            # Construir un enlace de ejemplo; ajústalo según tu plataforma real
+            st.markdown(f"- Reacciones: {post_row['Reacciones']}")
+            st.markdown(f"- Categoría: {post_row['Categoria']}")
             ejemplo_url = f"https://facebook.com/{post_row['Post_ID']}"
             st.markdown(f"[Ir al Post]({ejemplo_url})", unsafe_allow_html=True)
+            # Opcional: mostrar comentarios relacionados a ese post ID
+            df_coms_post = df_comments[df_comments['Post_ID'] == pid_str]
+            if not df_coms_post.empty:
+                with st.expander("Ver comentarios relacionados a este Post"):
+                    st.dataframe(
+                        df_coms_post[['Autor', 'Mensaje', 'Fecha', 'Reacciones']],
+                        use_container_width=True
+                    )
         else:
-            st.write("No se encontró ningún post con ese ID en los resultados actuales.")
+            st.info("No se encontró ningún post con ese ID en la base de datos.")
 
 # --------------------------------
-# 10. Si buscamos en Posts, mostrar n‐grams de Comments relacionados
-# --------------------------------
 if dataset_option == "Posts" and post_search.strip() != "":
-    st.header("N‐gramas de Comentarios Relacionados a los Posts Encontrados")
+    st.subheader("Tabla resumen de Posts encontrados")
+    st.dataframe(
+        df[["Post_ID", "Autor", "Fecha", "Mensaje", "Reacciones", "Categoria"]].sort_values("Fecha", ascending=False),
+        use_container_width=True
+    )
+
+# --------------------------------
+# N‐gramas y Sentimiento de Comentarios Relacionados a los Posts Encontrados
+if dataset_option == "Posts" and post_search.strip() != "":
+    st.header("N‐gramas y Sentimiento de Comentarios Relacionados a los Posts Encontrados")
     post_ids = df['Post_ID'].unique().tolist()
     df_related_comments = df_comments[df_comments['Post_ID'].isin(post_ids)].copy()
     if not df_related_comments.empty:
-        textos_rel = df_related_comments['Mensaje'].dropna().astype(str)
+        df_related_comments['Mensaje_Limpio'] = (
+            df_related_comments['Mensaje']
+            .astype(str)
+            .str.replace(r"http\S+|www\S+|https\S+", "", regex=True)
+            .str.replace(r"[^\w\sáéíóúñ]", "", regex=True)
+            .str.strip()
+        )
+        with st.spinner("Analizando sentimiento de comentarios relacionados..."):
+            df_related_comments['Sentimiento'] = df_related_comments['Mensaje_Limpio'].apply(
+                lambda txt: sent_analyzer.predict(txt).output if txt else "none"
+            )
+        # SOLO USAR SENTIMIENTOS VALIDOS EN TODO
+        sentiment_validos = ['POS', 'NEU', 'NEG']
+        df_valid = df_related_comments[df_related_comments['Sentimiento'].isin(sentiment_validos)]
+        senti_counts = df_valid['Sentimiento'].value_counts(normalize=True)
+        st.info("**Distribución de Sentimiento en los comentarios relacionados:**")
+        for s, name in zip(['POS', 'NEU', 'NEG'], ['Positivo', 'Neutro', 'Negativo']):
+            pct = 100 * senti_counts.get(s, 0)
+            st.write(f"{name}: {pct:.1f}%")
+        # Gráfico de torta
+        senti_counts_abs = df_valid['Sentimiento'].value_counts()
+        labels = ['Positivo', 'Neutro', 'Negativo']
+        keys = ['POS', 'NEU', 'NEG']
+        values = [senti_counts_abs.get(k, 0) for k in keys]
+        colors = ['#3ad29f', '#b6bbc4', '#f34f4f']
+        fig, ax = plt.subplots()
+        wedges, texts, autotexts = ax.pie(
+            values,
+            labels=labels,
+            autopct='%1.1f%%',
+            startangle=90,
+            colors=colors
+        )
+        ax.axis('equal')
+        plt.title('Distribución de Sentimiento en Comentarios')
+        st.pyplot(fig)
+        # N-gramas
         base_stop = list(stopwords.words("spanish"))
         extra_stop = [
             "http", "https", "www", "com", "org", "net", "ftp",
             "https://", "http://", "://", "url", "rt"
         ]
         spanish_stopwords = base_stop + extra_stop
-
         @st.cache_data
         def gen_ngrams_relat(text_series: pd.Series, ngram_range=(1, 1)):
             vectorizer = CountVectorizer(
@@ -312,18 +312,20 @@ if dataset_option == "Posts" and post_search.strip() != "":
             ngrams = vectorizer.get_feature_names_out()
             counts = X.sum(axis=0).A1
             return pd.DataFrame({"ngram": ngrams, "count": counts}).sort_values(by="count", ascending=False)
-
-        df_ngrams_rel = gen_ngrams_relat(textos_rel, ngram_range=ngram_range)
+        df_ngrams_rel = gen_ngrams_relat(df_valid['Mensaje_Limpio'].dropna().astype(str), ngram_range=ngram_range)
         st.subheader(f"Top N‐gramas en Comentarios relacionados ({ngram_option})")
         st.dataframe(df_ngrams_rel.head(50), use_container_width=True)
+        # Tabla expandible
+        with st.expander("Ver comentarios relacionados y su calificación de sentimiento"):
+            st.dataframe(
+                df_valid[['Autor', 'Mensaje', 'Sentimiento', 'Fecha', 'Reacciones']],
+                use_container_width=True
+            )
     else:
         st.write("No hay comentarios relacionados con los posts encontrados.")
 
 # --------------------------------
-# 11. Detección de Outliers por Reacciones
-# --------------------------------
 st.header("Detección de Outliers por Reacciones")
-
 if len(df) > 0 and "Reacciones" in df.columns:
     mean_reacts = df["Reacciones"].mean()
     std_reacts = df["Reacciones"].std()
@@ -342,11 +344,7 @@ if len(df) > 0 and "Reacciones" in df.columns:
 else:
     st.write("No hay datos suficientes para detectar outliers.")
 
-# --------------------------------
-# 12. Generación de N‐gramas y cálculo de likes
-# --------------------------------
 st.header(f"Top N‐gramas ({ngram_option})")
-
 textos = df["Mensaje"].dropna().astype(str)
 base_stop = list(stopwords.words("spanish"))
 extra_stop = [
@@ -354,7 +352,6 @@ extra_stop = [
     "https://", "http://", "://", "url", "rt"
 ]
 spanish_stopwords = base_stop + extra_stop
-
 @st.cache_data
 def generar_ngrams(text_series: pd.Series, ngram_range=(1, 1), likes=None):
     vectorizer = CountVectorizer(
@@ -370,10 +367,8 @@ def generar_ngrams(text_series: pd.Series, ngram_range=(1, 1), likes=None):
         likes_sum = X.T.dot(likes_array)
         df_ngrams["likes_sum"] = likes_sum
     return df_ngrams.sort_values(by="count", ascending=False)
-
 likes_param = df["Reacciones"] if use_likes else None
 df_ngrams = generar_ngrams(textos, ngram_range=ngram_range, likes=likes_param)
-
 if use_likes:
     st.markdown("*Ordenado por frecuencia de aparición*")
     st.dataframe(df_ngrams[["ngram", "count", "likes_sum"]].head(50), use_container_width=True)
@@ -381,9 +376,6 @@ if use_likes:
 else:
     st.dataframe(df_ngrams[["ngram", "count"]].head(50), use_container_width=True)
 
-# --------------------------------
-# 13. Tendencias temporales de N‐grama (opción en sidebar)
-# --------------------------------
 show_trend = st.sidebar.checkbox("Mostrar tendencias temporales de un N‐grama", value=False)
 if show_trend:
     ngram_for_trend = st.sidebar.text_input("Introduce un N‐grama para su tendencia (exacto)", "")
@@ -398,9 +390,6 @@ if show_trend:
         trend_series = trend_series.reindex(fecha_index.date, fill_value=0)
         st.line_chart(trend_series)
 
-# --------------------------------
-# 14. Word Cloud (opción en sidebar)
-# --------------------------------
 show_wordcloud = st.sidebar.checkbox("Mostrar Word Cloud", value=False)
 if show_wordcloud:
     st.subheader("Word Cloud del Conjunto Filtrado")
@@ -415,37 +404,27 @@ if show_wordcloud:
     ax_wc.axis("off")
     st.pyplot(fig_wc)
 
-# --------------------------------
-# 15. Topic Modeling LDA (opción en sidebar) - CORREGIDO
-# --------------------------------
 show_topics = st.sidebar.checkbox("Mostrar Topic Modeling", value=False)
 if show_topics:
     num_topics = st.sidebar.slider("Número de tópicos LDA", min_value=2, max_value=10, value=3)
     st.subheader(f"Topic Modeling con LDA ({num_topics} tópicos)")
-
     tf_vectorizer = CountVectorizer(
         stop_words=spanish_stopwords,
         max_df=0.95,
         min_df=2
     )
     tf_matrix = tf_vectorizer.fit_transform(textos)
-
     lda = LatentDirichletAllocation(n_components=num_topics, random_state=0)
     lda.fit(tf_matrix)
-
     words = tf_vectorizer.get_feature_names_out()
     topics = {}
     for idx, topic in enumerate(lda.components_):
         top_indices = topic.argsort()[-10:][::-1]
         top_words = [words[i] for i in top_indices]
         topics[f"Tópico {idx+1}"] = ", ".join(top_words)
-
     df_topics = pd.DataFrame.from_dict(topics, orient='index', columns=['Palabras Clave'])
     st.write(df_topics)
 
-# --------------------------------
-# 16. Correlación Sentimiento vs Reacciones (solo Comments)
-# --------------------------------
 show_corr = st.sidebar.checkbox("Mostrar correlación Sentimiento vs Likes (Comments)", value=False)
 if dataset_option == "Comments" and show_corr:
     st.subheader("Correlación Sentimiento vs Reacciones (Comments)")
@@ -459,13 +438,11 @@ if dataset_option == "Comments" and show_corr:
     ax_corr.set_title("Sentimiento vs Reacciones")
     st.pyplot(fig_corr)
 
-# --------------------------------
-# 17. Indicaciones finales
-# --------------------------------
 st.markdown("""
 - Puedes analizar Pentagramas además de uni-, bi-, tri- y cuatrigramas.
 - El KPI Dashboard muestra al inicio la visión general.
-- La búsqueda en Posts despliega n-gramas de comentarios relacionados.
+- La búsqueda en Posts despliega tabla resumen, n-gramas de comentarios relacionados y análisis de sentimiento con gráfico de torta (datos consistentes).
+- Buscador por ID de Post con enlace y detalles.
 - Se incorpora detección de outliers por reacciones.
 - En caso de querer ver tendencias de un n-grama, activa la casilla “Mostrar tendencias temporales de un N-grama”.
 - Para Word Cloud, activa “Mostrar Word Cloud”.
@@ -473,5 +450,3 @@ st.markdown("""
 - Para correlación Sentimiento vs Reacciones en Comments, activa “Mostrar correlación Sentimiento vs Likes (Comments)”.
 - Recarga la app si se añaden nuevos datos a la base para actualizar rangos y métricas.
 """)
-
-
