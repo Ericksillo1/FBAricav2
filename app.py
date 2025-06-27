@@ -13,6 +13,7 @@ from wordcloud import WordCloud
 from sklearn.decomposition import LatentDirichletAllocation
 import numpy as np
 from pysentimiento import create_analyzer
+import matplotlib.dates as mdates
 
 nltk.download('stopwords')
 nltk.download('vader_lexicon')
@@ -297,7 +298,7 @@ if dataset_option == "Posts" and post_search.strip() != "" and not df.empty:
                 )
             sentiment_validos = ['POS', 'NEU', 'NEG']
             df_valid = df_related_comments[df_related_comments['Sentimiento'].isin(sentiment_validos)]
-            # --- Sentimiento ---
+            # --- Sentimiento Pie ---
             senti_counts = df_valid['Sentimiento'].value_counts(normalize=True)
             st.info("**Distribución de Sentimiento en los comentarios relacionados:**")
             for s, name in zip(['POS', 'NEU', 'NEG'], ['Positivo', 'Neutro', 'Negativo']):
@@ -323,7 +324,51 @@ if dataset_option == "Posts" and post_search.strip() != "" and not df.empty:
             ax.axis('equal')
             fig.patch.set_facecolor('white')
             st.pyplot(fig)
-            # --- Emociones ---
+
+            # --- Gráfico de evolución temporal de sentimiento ---
+            sent_map = {'POS': 1, 'NEU': 0, 'NEG': -1}
+            df_valid['Sentimiento_Num'] = df_valid['Sentimiento'].map(sent_map)
+            df_valid['Fecha_simple'] = df_valid['Fecha'].dt.date
+            evol = df_valid.groupby('Fecha_simple')['Sentimiento_Num'].mean()
+            st.subheader("Evolución Temporal del Sentimiento Promedio en Comentarios")
+            fig_ev, ax_ev = plt.subplots(figsize=(8,4))
+            ax_ev.plot(evol.index, evol.values, marker='o', linewidth=2)
+            ax_ev.axhline(0, color='gray', linestyle='--', lw=1)
+            ax_ev.set_ylabel("Sentimiento Promedio\n(+1=Positivo, 0=Neutro, -1=Negativo)", fontsize=11)
+            ax_ev.set_xlabel("Fecha")
+            ax_ev.set_title("Evolución Temporal de Sentimiento en Comentarios", fontsize=15, pad=15)
+            ax_ev.xaxis.set_major_locator(mdates.AutoDateLocator())
+            fig_ev.autofmt_xdate()
+            fig_ev.patch.set_facecolor('white')
+            st.pyplot(fig_ev)
+
+            # --- Wordcloud por sentimiento ---
+            st.subheader("Word Cloud por Sentimiento")
+            base_stop = list(stopwords.words("spanish"))
+            extra_stop = [
+                "http", "https", "www", "com", "org", "net", "ftp",
+                "https://", "http://", "://", "url", "rt"
+            ]
+            spanish_stopwords = base_stop + extra_stop
+            for clave, label, color in zip(['POS','NEU','NEG'], ['Positivo','Neutro','Negativo'], ['#3ad29f','#b6bbc4','#f34f4f']):
+                textos_wc = df_valid[df_valid['Sentimiento']==clave]['Mensaje_Limpio'].dropna().tolist()
+                if textos_wc:
+                    st.markdown(f"**{label}**")
+                    combined_text = " ".join(textos_wc)
+                    wc = WordCloud(
+                        width=700, height=320,
+                        background_color="white",
+                        stopwords=set(spanish_stopwords),
+                        colormap=None
+                    ).generate(combined_text)
+                    fig_wc, ax_wc = plt.subplots(figsize=(8, 3.5))
+                    ax_wc.imshow(wc, interpolation="bilinear")
+                    ax_wc.axis("off")
+                    st.pyplot(fig_wc)
+                else:
+                    st.markdown(f"*No hay suficientes comentarios {label.lower()} para generar WordCloud.*")
+
+            # --- Emociones Pie ---
             emociones_validas = ['joy', 'anger', 'fear', 'sadness', 'surprise', 'others']
             emociones_nombres = {
                 'joy': 'Alegría',
@@ -353,13 +398,8 @@ if dataset_option == "Posts" and post_search.strip() != "" and not df.empty:
             ax_em.axis('equal')
             fig_em.patch.set_facecolor('white')
             st.pyplot(fig_em)
-            # N-gramas y tabla como antes...
-            base_stop = list(stopwords.words("spanish"))
-            extra_stop = [
-                "http", "https", "www", "com", "org", "net", "ftp",
-                "https://", "http://", "://", "url", "rt"
-            ]
-            spanish_stopwords = base_stop + extra_stop
+
+            # --- Top n-gramas en comentarios relacionados ---
             @st.cache_data
             def gen_ngrams_relat(text_series: pd.Series, ngram_range=(1, 1)):
                 vectorizer = CountVectorizer(
@@ -503,7 +543,7 @@ if dataset_option == "Comments" and show_corr:
 st.markdown("""
 - Puedes analizar Pentagramas además de uni-, bi-, tri- y cuatrigramas.
 - El KPI Dashboard muestra al inicio la visión general.
-- La búsqueda en Posts despliega tabla resumen, n-gramas, sentimiento y **emociones** de comentarios relacionados (con gráficos y tabla).
+- La búsqueda en Posts despliega tabla resumen, n-gramas, sentimiento, evolución temporal y **wordcloud por sentimiento** de comentarios relacionados.
 - Buscador por ID de Post con enlace y detalles.
 - Se incorpora detección de outliers por reacciones.
 - Para tendencias, wordcloud, topic modeling y correlación sentimiento/likes usa las opciones de la barra lateral.
