@@ -79,7 +79,7 @@ def categorize_posts(df):
             "presidente", "alcalde", "congreso", "diputado", "senador",
             "votación", "campaña", "coalición", "partido", "oposición",
             "constitución","Gonzalo Winter","Gabriel Boric","cosejal","alcalde","luis malla","gobernador","jorge diaz",
-            "republicanos","liberales","partido","toha" 
+            "republicanos","liberales","partido","toha"
         ],
         "Economía": [
             "economía", "inflación", "PIB", "mercado", "impuestos",
@@ -288,14 +288,16 @@ if dataset_option == "Posts" and post_search.strip() != "" and not df.empty:
                 .str.replace(r"[^\w\sáéíóúñ]", "", regex=True)
                 .str.strip()
             )
+            # -------------- OPTIMIZACIÓN BATCH AQUÍ --------------
+            textos_limpios = df_related_comments['Mensaje_Limpio'].fillna('').tolist()
             with st.spinner("Analizando sentimiento de comentarios relacionados..."):
-                df_related_comments['Sentimiento'] = df_related_comments['Mensaje_Limpio'].apply(
-                    lambda txt: sent_analyzer.predict(txt).output if txt else "none"
-                )
+                resultados_sent = sent_analyzer.predict(textos_limpios)
+                df_related_comments['Sentimiento'] = [r.output if hasattr(r, "output") else "none" for r in resultados_sent]
             with st.spinner("Analizando emociones de comentarios relacionados..."):
-                df_related_comments['Emocion'] = df_related_comments['Mensaje_Limpio'].apply(
-                    lambda txt: emotion_analyzer.predict(txt).output if txt else "none"
-                )
+                resultados_emo = emotion_analyzer.predict(textos_limpios)
+                df_related_comments['Emocion'] = [r.output if hasattr(r, "output") else "none" for r in resultados_emo]
+            # -------------- FIN OPTIMIZACIÓN BATCH --------------
+
             sentiment_validos = ['POS', 'NEU', 'NEG']
             df_valid = df_related_comments[df_related_comments['Sentimiento'].isin(sentiment_validos)]
             # --- Sentimiento Pie ---
