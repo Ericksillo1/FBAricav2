@@ -1,4 +1,5 @@
 import os
+import time
 import streamlit as st
 import pandas as pd
 import pyodbc
@@ -288,15 +289,32 @@ if dataset_option == "Posts" and post_search.strip() != "" and not df.empty:
                 .str.replace(r"[^\w\sáéíóúñ]", "", regex=True)
                 .str.strip()
             )
-            # -------------- OPTIMIZACIÓN BATCH AQUÍ --------------
+            # --------- BARRA DE PROGRESO SIMULADA PARA ANÁLISIS BATCH ---------
+            progress_text = "Analizando sentimiento y emociones de comentarios relacionados..."
+            progress_bar = st.progress(0, text=progress_text)
+
+            # Paso 1: Preparar datos (33%)
+            progress_bar.progress(0.33, text="Preparando datos...")
             textos_limpios = df_related_comments['Mensaje_Limpio'].fillna('').tolist()
-            with st.spinner("Analizando sentimiento de comentarios relacionados..."):
-                resultados_sent = sent_analyzer.predict(textos_limpios)
-                df_related_comments['Sentimiento'] = [r.output if hasattr(r, "output") else "none" for r in resultados_sent]
-            with st.spinner("Analizando emociones de comentarios relacionados..."):
-                resultados_emo = emotion_analyzer.predict(textos_limpios)
-                df_related_comments['Emocion'] = [r.output if hasattr(r, "output") else "none" for r in resultados_emo]
-            # -------------- FIN OPTIMIZACIÓN BATCH --------------
+            time.sleep(0.4)
+
+            # Paso 2: Analizando sentimiento (66%)
+            progress_bar.progress(0.66, text="Analizando sentimiento...")
+            resultados_sent = sent_analyzer.predict(textos_limpios)
+            df_related_comments['Sentimiento'] = [r.output if hasattr(r, "output") else "none" for r in resultados_sent]
+            time.sleep(0.6)
+
+            # Paso 3: Analizando emociones (99%)
+            progress_bar.progress(0.99, text="Analizando emociones...")
+            resultados_emo = emotion_analyzer.predict(textos_limpios)
+            df_related_comments['Emocion'] = [r.output if hasattr(r, "output") else "none" for r in resultados_emo]
+            time.sleep(0.5)
+
+            # Fin: 100%
+            progress_bar.progress(1.0, text="¡Análisis completado!")
+            time.sleep(0.5)
+            progress_bar.empty()
+            # --------- FIN BARRA DE PROGRESO ---------
 
             sentiment_validos = ['POS', 'NEU', 'NEG']
             df_valid = df_related_comments[df_related_comments['Sentimiento'].isin(sentiment_validos)]
@@ -551,3 +569,4 @@ st.markdown("""
 - Para tendencias, wordcloud, topic modeling y correlación sentimiento/likes usa las opciones de la barra lateral.
 - Recarga la app si se añaden nuevos datos para actualizar rangos y métricas.
 """)
+
